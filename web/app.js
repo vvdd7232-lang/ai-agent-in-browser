@@ -438,7 +438,9 @@ async function refreshState() {
     $('#pill-count').textContent = `${s.stats.total} cmd · ${s.stats.failed} err`;
     setPill('#pill-shell', s.shell.busy ? 'busy' : 'ok', `${s.shell.kind} · ${s.shell.label}`);
     applyConfig(s.config);
-    $('#status-token').textContent = `token ••••${state.token.slice(-4)} · клиентов: ${s.clients}`;
+    $('#status-token').textContent = boot.open
+      ? `режим без токена (--insecure) · клиентов: ${s.clients}`
+      : `token ••••${state.token.slice(-4)} · клиентов: ${s.clients}`;
     return s;
   } catch {
     return null;
@@ -630,13 +632,19 @@ async function tryPreviewToken() {
 
 (async function init() {
   bind();
+
+  // режим «на свой страх и риск»: токен не нужен, показываем предупреждение
+  if (boot.open) {
+    $('#insecure-banner').hidden = false;
+  }
+
   const urlToken = new URLSearchParams(location.search).get('token');
   if (urlToken) {
     state.token = urlToken;
     localStorage.setItem('agent-token', urlToken);
     history.replaceState(null, '', location.pathname);
   }
-  if (!state.token) {
+  if (!state.token && !boot.open) {
     const ok = await tryPreviewToken();
     if (!ok) {
       showGate();

@@ -181,6 +181,32 @@ test('server: панель отдаётся и принимает токен в 
   await stop(bridge, server);
 });
 
+test('server: --insecure открывает API и панель без токена', async () => {
+  const bridge = new Bridge({ dataDir: tmpDir(), cwd: tmpDir(), token: TOKEN, insecure: true });
+  bridge.start();
+  const server = createServer(bridge);
+  const port = await listen(server);
+
+  const st = await req(port, 'GET', '/api/state');
+  assert.strictEqual(st.status, 200);
+
+  const ex = await req(port, 'POST', '/api/execute', { command: 'echo open-mode' });
+  assert.strictEqual(ex.status, 200);
+  const res = await req(port, 'GET', `/api/result/${ex.json.id}?wait=6000`);
+  assert.strictEqual(res.json.result.exitCode, 0);
+  assert.strictEqual(res.json.result.output.trim(), 'open-mode');
+
+  await stop(bridge, server);
+});
+
+test('server: без --insecure API по-прежнему требует токен', async () => {
+  const { bridge, server } = mk();
+  const port = await listen(server);
+  const st = await req(port, 'GET', '/api/state');
+  assert.strictEqual(st.status, 401);
+  await stop(bridge, server);
+});
+
 test('ext: extension/parser.js синхронизирован с bridge/parser.js', () => {
   const a = fs.readFileSync(path.join(__dirname, '..', 'bridge', 'parser.js'), 'utf8');
   const b = fs.readFileSync(path.join(__dirname, '..', 'extension', 'parser.js'), 'utf8');

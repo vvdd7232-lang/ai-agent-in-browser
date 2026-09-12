@@ -27,6 +27,9 @@ ai-agent-in-browser — мост между ИИ-чатом в браузере 
   --data-dir <path>     где хранить конфиг и историю  (по умолчанию ${defaultDataDir()})
   --preview             пробросить токен в панель без query (для песочниц/демо;
                         по умолчанию панель требует токен)
+  --insecure            РЕЖИМ НА СВОЙ СТРАХ И РИСК: открыть мост БЕЗ токена.
+                        Любой, кто достучится до адреса, сможет выполнять команды.
+                        Только для песочниц и локальных экспериментов!
   --no-open             не открывать панель в браузере
   -h, --help            эта справка
 
@@ -71,6 +74,10 @@ function parseArgs(argv) {
       case '--preview':
         out.preview = true;
         break;
+      case '--insecure':
+      case '--open-access':
+        out.insecure = true;
+        break;
       default:
         if (a.startsWith('--port=')) out.port = parseInt(a.split('=')[1], 10);
         else if (a.startsWith('--host=')) out.host = a.split('=')[1];
@@ -107,6 +114,7 @@ async function main() {
     dataDir: args.dataDir,
     cwd: args.cwd,
     token: args.token,
+    insecure: !!args.insecure,
     config: {
       ...(args.port ? { port: args.port } : {}),
       ...(args.host ? { host: args.host } : {}),
@@ -143,6 +151,12 @@ async function main() {
     console.log('');
     console.log(C.red('  ! Мост слушает не только loopback: любой, кто достучится до этого'));
     console.log(C.red('    адреса и узнает токен, сможет выполнять команды на этой машине.'));
+  }
+  if (bridge.insecure) {
+    console.log('');
+    console.log(C.red('  !!! РЕЖИМ НА СВОЙ СТРАХ И РИСК: токен ОТКЛЮЧЕН (--insecure).'));
+    console.log(C.red('  !!! Любой, кто откроет панель, сможет выполнять команды на этой машине.'));
+    console.log(C.red('  !!! Не используй этот режим вне песочницы.'));
   }
   console.log('');
   console.log(C.dim('  Ctrl+C — остановить'));

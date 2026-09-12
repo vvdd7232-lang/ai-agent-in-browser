@@ -41,6 +41,8 @@ class Bridge {
     if (options.token) {
       this.store.config.token = options.token;
     }
+    // --insecure: «на свой страх и риск» — токен не требуется совсем.
+    this.insecure = !!options.insecure;
 
     this.shell = new ShellSession({
       cwd: this.store.config.cwd || options.cwd || process.cwd(),
@@ -332,6 +334,7 @@ function createServer(bridge, opts = {}) {
 }
 
 function authorized(url, req, bridge) {
+  if (bridge.insecure) return true; // режим «на свой страх и риск»
   const token = req.headers['x-agent-token'] || url.searchParams.get('token');
   return timingSafeEqualStr(token, bridge.token);
 }
@@ -412,6 +415,7 @@ async function route(req, res, url, bridge, opts) {
     const ok = authorized(url, req, bridge) || !!(opts && opts.preview);
     const bootstrap = {
       token: ok ? bridge.token : null,
+      open: !!bridge.insecure,
       host: req.headers.host,
       secure: !!req.socket.encrypted,
       version: VERSION,
