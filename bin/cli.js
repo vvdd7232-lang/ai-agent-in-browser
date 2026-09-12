@@ -188,7 +188,10 @@ async function main() {
 main().catch((err) => {
   console.error(C.red('\nНе удалось запустить мост: ') + (err && err.message));
   if (err && err.code === 'EADDRINUSE') {
-    console.error('Порт занят. Попробуй --port 7789');
+    console.error(C.red('  Порт занят ДРУГИМ экземпляром моста (или чужой программой).'));
+    console.error(C.red('  Браузер тогда ходит в старый процесс, и новые флаги (--insecure)'));
+    console.error(C.red('  «не работают». Закрой старое окно моста (Ctrl+C) и запусти снова,'));
+    console.error(C.red('  либо возьми другой порт: --port 7791'));
   }
   process.exit(1);
 });

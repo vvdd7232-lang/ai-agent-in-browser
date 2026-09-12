@@ -2,6 +2,10 @@
 
 /* Панель моста: чат + терминал + настройки. Без сборки, без зависимостей. */
 
+/* Версия JS панели. Висит в диагностике на экране-замке: если там версия
+   не совпадает с кодом в репозитории — браузер держит протухшую страницу. */
+const APP_JS_VERSION = 'g4-diag';
+
 const P = window.AiAgentParser;
 const $ = (sel) => document.querySelector(sel);
 
@@ -489,9 +493,35 @@ async function copyText(text, btn) {
 
 /* ----------------------------------------------------------------- gate --- */
 
+/**
+ * Диагностика прямо на замке: какая версия JS в браузере, какой режим у
+ * сервера, жив ли shell. По этим строкам любой спор «кто протух» решается
+ * одним скриншотом.
+ */
+async function fillGateDiag(extra) {
+  const diag = $('#gate-diag');
+  if (!diag) return;
+  const lines = [];
+  lines.push(`страница: app.js ${APP_JS_VERSION} · парсер ${window.AiAgentParser ? 'ok' : 'НЕ ЗАГРУЗИЛСЯ'}`);
+  lines.push(`bootstrap: open=${!!boot.open} · token=${boot.token ? 'есть' : 'нет'} · server v${boot.version || '?'}`);
+  try {
+    const res = await fetch('/api/health');
+    const h = await res.json();
+    lines.push(
+      `сервер: v${h.version} · insecure=${!!h.insecure} · shell ${h.shell ? h.shell.kind : '?'} ${h.shell && h.shell.alive ? '(жив)' : '(мёртв)'}`
+    );
+    if (h.insecure) $('#btn-open-login').hidden = false;
+  } catch (err) {
+    lines.push('сервер: /api/health не отвечает (' + ((err && err.message) || err) + ')');
+  }
+  if (extra) lines.push(extra);
+  diag.textContent = lines.join('\n');
+}
+
 function showGate(msg) {
   $('#token-gate').hidden = false;
   if (msg) $('#token-error').textContent = msg;
+  fillGateDiag();
 }
 
 /* ----------------------------------------------------------------- init --- */
@@ -605,7 +635,15 @@ function bind() {
       boot0();
     } else {
       $('#token-error').textContent = 'Не подошёл. Токен есть в выводе `node bin/cli.js`.';
+      fillGateDiag();
     }
+  });
+
+  $('#btn-open-login').addEventListener('click', () => {
+    boot.open = true;
+    $('#insecure-banner').hidden = false;
+    $('#token-gate').hidden = true;
+    boot0();
   });
 }
 
@@ -633,8 +671,16 @@ async function tryPreviewToken() {
 (async function init() {
   bind();
 
-  // режим «на свой страх и риск»: токен не нужен, показываем предупреждение
-  if (boot.open) {
+  // Режим сервера спрашиваем ДО любых решений: даже если браузер прислал
+  // протухший bootstrap, открытый режим виден по публичному /api/health.
+  let serverOpen = !!boot.open;
+  try {
+    const h = await (await fetch('/api/health')).json();
+    if (h && h.insecure) serverOpen = true;
+  } catch {}
+
+  if (serverOpen) {
+    boot.open = true;
     $('#insecure-banner').hidden = false;
   }
 
@@ -644,7 +690,7 @@ async function tryPreviewToken() {
     localStorage.setItem('agent-token', urlToken);
     history.replaceState(null, '', location.pathname);
   }
-  if (!state.token && !boot.open) {
+  if (!state.token && !serverOpen) {
     const ok = await tryPreviewToken();
     if (!ok) {
       showGate();

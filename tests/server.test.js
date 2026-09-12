@@ -65,6 +65,7 @@ test('server: health открыт без токена, state закрыт', asyn
   const health = await req(port, 'GET', '/api/health');
   assert.strictEqual(health.status, 200);
   assert.strictEqual(health.json.ok, true);
+  assert.strictEqual(health.json.insecure, false);
 
   const state = await req(port, 'GET', '/api/state');
   assert.strictEqual(state.status, 401);
@@ -186,6 +187,9 @@ test('server: --insecure открывает API и панель без токе�
   bridge.start();
   const server = createServer(bridge);
   const port = await listen(server);
+
+  const h = await req(port, 'GET', '/api/health');
+  assert.strictEqual(h.json.insecure, true, 'health должен сообщать открытый режим');
 
   const st = await req(port, 'GET', '/api/state');
   assert.strictEqual(st.status, 200);

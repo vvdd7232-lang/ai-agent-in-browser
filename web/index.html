@@ -167,10 +167,14 @@
           Он напечатан в консоли, где запущен <code>node bin/cli.js</code>, и лежит в
           <code>~/.ai-agent-in-browser/config.json</code>.
         </p>
-        <form id="token-form">
+        <form id="token-form" onsubmit="return false">
           <input id="token-input" placeholder="вставь токен" autocomplete="off" />
           <button class="btn primary" type="submit">Войти</button>
         </form>
+        <button class="btn ok" id="btn-open-login" type="button" hidden>
+          Сервер запущен с --insecure — войти без токена
+        </button>
+        <pre class="gate-diag mono" id="gate-diag"></pre>
         <p class="hint" id="token-error"></p>
       </div>
     </div>

@@ -390,6 +390,7 @@ async function route(req, res, url, bridge, opts) {
     return sendJson(res, 200, {
       ok: true,
       version: VERSION,
+      insecure: !!bridge.insecure,
       shell: bridge.shell.info(),
       approvalMode: bridge.store.config.approvalMode,
     });
