@@ -25,6 +25,8 @@ ai-agent-in-browser — мост между ИИ-чатом в браузере 
   --token <secret>      задать токен вручную
   --approval <mode>     auto | confirm | off          (по умолчанию auto)
   --data-dir <path>     где хранить конфиг и историю  (по умолчанию ${defaultDataDir()})
+  --preview             пробросить токен в панель без query (для песочниц/демо;
+                        по умолчанию панель требует токен)
   --no-open             не открывать панель в браузере
   -h, --help            эта справка
 
@@ -65,6 +67,9 @@ function parseArgs(argv) {
         break;
       case '--no-open':
         out.open = false;
+        break;
+      case '--preview':
+        out.preview = true;
         break;
       default:
         if (a.startsWith('--port=')) out.port = parseInt(a.split('=')[1], 10);
@@ -113,7 +118,7 @@ async function main() {
   const port = bridge.store.config.port;
   bridge.start();
 
-  const server = createServer(bridge);
+  const server = createServer(bridge, { preview: !!args.preview });
   await new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(port, host, resolve);

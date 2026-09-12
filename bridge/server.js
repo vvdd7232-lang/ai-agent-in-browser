@@ -400,7 +400,9 @@ async function route(req, res, url, bridge, opts) {
   if (p === '/' || p === '/index.html') {
     const file = path.join(WEB_DIR, 'index.html');
     let html = fs.readFileSync(file, 'utf8');
-    const ok = authorized(url, req, bridge);
+    // --preview: для песочниц/демо пробрасываем токен в страницу без query.
+    // По умолчанию выключено — панель требует токен.
+    const ok = authorized(url, req, bridge) || !!(opts && opts.preview);
     const bootstrap = {
       token: ok ? bridge.token : null,
       host: req.headers.host,
