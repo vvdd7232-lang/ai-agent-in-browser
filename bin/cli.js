@@ -5,6 +5,7 @@ const path = require('node:path');
 const { Bridge, createServer } = require('../bridge/server');
 const { defaultDataDir, detectPlatform } = require('../bridge/shell');
 const { syncParser } = require('../scripts/build-extension');
+const { openBrowser } = require('../bridge/open');
 
 // чтобы папку extension/ можно было грузить в Chrome «как есть»,
 // держим её копию парсера свежей на каждый запуск моста
@@ -163,8 +164,8 @@ async function main() {
   console.log('');
 
   if (args.open && process.stdout.isTTY) {
-    const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
-    require('node:child_process').spawn(cmd, [panelUrl], { stdio: 'ignore', detached: true }).unref();
+    // не может уронить мост: все ошибки открытия глотаются внутри
+    openBrowser(panelUrl);
   }
 
   bridge.shell.on('command-end', (r) => {
