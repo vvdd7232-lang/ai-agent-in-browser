@@ -44,49 +44,52 @@ ai-agent-in-browser — мост между ИИ-чатом в браузере 
 function parseArgs(argv) {
   const out = { open: true };
   for (let i = 0; i < argv.length; i += 1) {
-    const a = argv[i];
+    // PowerShell исторически переписывает `--flag` в `-flag`, поэтому
+    // принимаем оба варианта тире — иначе `--insecure` молча игнорируется
+    // и мост поднимается защищённым.
+    const a = String(argv[i]).replace(/^--/, '-');
     const next = () => argv[++i];
     switch (a) {
       case '-h':
-      case '--help':
+      case '-help':
         out.help = true;
         break;
-      case '--port':
+      case '-port':
         out.port = parseInt(next(), 10);
         break;
-      case '--host':
+      case '-host':
         out.host = next();
         break;
-      case '--cwd':
+      case '-cwd':
         out.cwd = path.resolve(next());
         break;
-      case '--token':
+      case '-token':
         out.token = next();
         break;
-      case '--approval':
+      case '-approval':
         out.approval = next();
         break;
-      case '--data-dir':
+      case '-data-dir':
         out.dataDir = path.resolve(next());
         break;
-      case '--no-open':
+      case '-no-open':
         out.open = false;
         break;
-      case '--preview':
+      case '-preview':
         out.preview = true;
         break;
-      case '--insecure':
-      case '--open-access':
+      case '-insecure':
+      case '-open-access':
         out.insecure = true;
         break;
       default:
-        if (a.startsWith('--port=')) out.port = parseInt(a.split('=')[1], 10);
-        else if (a.startsWith('--host=')) out.host = a.split('=')[1];
-        else if (a.startsWith('--cwd=')) out.cwd = path.resolve(a.split('=')[1]);
-        else if (a.startsWith('--approval=')) out.approval = a.split('=')[1];
-        else if (a === '--open') out.open = true;
+        if (a.startsWith('-port=')) out.port = parseInt(a.split('=')[1], 10);
+        else if (a.startsWith('-host=')) out.host = a.split('=')[1];
+        else if (a.startsWith('-cwd=')) out.cwd = path.resolve(a.split('=')[1]);
+        else if (a.startsWith('-approval=')) out.approval = a.split('=')[1];
+        else if (a === '-open') out.open = true;
         else {
-          console.error(`Неизвестная опция: ${a}`);
+          console.error(`Неизвестная опция: ${argv[i]}`);
           process.exit(2);
         }
     }
@@ -185,13 +188,17 @@ async function main() {
   process.on('SIGTERM', shutdown);
 }
 
-main().catch((err) => {
-  console.error(C.red('\nНе удалось запустить мост: ') + (err && err.message));
-  if (err && err.code === 'EADDRINUSE') {
-    console.error(C.red('  Порт занят ДРУГИМ экземпляром моста (или чужой программой).'));
-    console.error(C.red('  Браузер тогда ходит в старый процесс, и новые флаги (--insecure)'));
-    console.error(C.red('  «не работают». Закрой старое окно моста (Ctrl+C) и запусти снова,'));
-    console.error(C.red('  либо возьми другой порт: --port 7791'));
-  }
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(C.red('\nНе удалось запустить мост: ') + (err && err.message));
+    if (err && err.code === 'EADDRINUSE') {
+      console.error(C.red('  Порт занят ДРУГИМ экземпляром моста (или чужой программой).'));
+      console.error(C.red('  Браузер тогда ходит в старый процесс, и новые флаги (--insecure)'));
+      console.error(C.red('  «не работают». Закрой старое окно моста (Ctrl+C) и запусти снова,'));
+      console.error(C.red('  либо возьми другой порт: --port 7791'));
+    }
+    process.exit(1);
+  });
+}
+
+module.exports = { parseArgs };
