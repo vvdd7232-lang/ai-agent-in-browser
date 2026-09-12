@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI Agent in Browser — мост к терминалу</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🖥️</text></svg>" />
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <!--BOOTSTRAP-->
+
+    <div class="insecure-banner" id="insecure-banner" hidden>
+      ⚠ РЕЖИМ НА СВОЙ СТРАХ И РИСК: мост запущен с <code>--insecure</code> и <b>не требует токена</b>.
+      Любой, у кого есть эта ссылка, может выполнять команды на машине.
+      Для песочницы — нормально, для твоего компьютера — выключи.
+    </div>
+
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">▚</div>
+        <div>
+          <h1>AI Agent in Browser</h1>
+          <p>обычный ИИ-чат <span class="arrow">→</span> твой терминал</p>
+        </div>
+      </div>
+
+      <div class="topbar-stats">
+        <div class="pill" id="pill-bridge"><i class="dot"></i><span>мост</span></div>
+        <div class="pill" id="pill-shell"><i class="dot"></i><span>shell</span></div>
+        <div class="pill mono" id="pill-cwd" title="рабочий каталог сессии">—</div>
+        <div class="pill mono" id="pill-count" title="выполнено команд">0 cmd</div>
+      </div>
+    </header>
+
+    <main class="layout">
+      <!-- ================= ЛЕВО: мост ================= -->
+      <aside class="col col-side">
+        <section class="card">
+          <h2>1 · Системный промпт</h2>
+          <p class="hint">
+            Вставь это <b>первым сообщением</b> в чат ИИ. Без него модель ответит
+            «я всего лишь ИИ и не имею доступа к компьютеру».
+          </p>
+          <div class="row">
+            <button class="btn primary" id="btn-copy-prompt">Скопировать промпт</button>
+            <button class="btn ghost" id="btn-copy-nudge" title="Если модель всё-таки отнекивается">Напоминание</button>
+          </div>
+          <pre class="prompt-preview" id="prompt-preview">загрузка…</pre>
+        </section>
+
+        <section class="card">
+          <h2>2 · Настройки моста</h2>
+          <label class="field">
+            <span>Подтверждение команд</span>
+            <select id="set-approval">
+              <option value="auto">auto — выполнять сразу</option>
+              <option value="confirm">confirm — спрашивать меня</option>
+              <option value="off">off — без проверок (опасно)</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Обрезка вывода, символов</span>
+            <input type="number" id="set-maxout" min="500" max="200000" step="500" />
+          </label>
+          <label class="field">
+            <span>Таймаут команды, мс</span>
+            <input type="number" id="set-timeout" min="1000" max="3600000" step="1000" />
+          </label>
+          <div class="row">
+            <button class="btn" id="btn-save-config">Сохранить</button>
+            <button class="btn ghost" id="btn-reset">Перезапустить shell</button>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>3 · LLM для демо-чата <span class="tag">необязательно</span></h2>
+          <p class="hint">
+            Основной режим — расширение читает твой обычный чат в браузере.
+            Ключ нужен только для чата в этой панели. Подойдёт любой
+            OpenAI-совместимый endpoint. Без ключа работает демо-ассистент —
+            заглушка модели, но <b>настоящий</b> терминал.
+          </p>
+          <label class="field"><span>Base URL</span><input id="set-llm-url" placeholder="https://api.openai.com/v1" /></label>
+          <label class="field"><span>Model</span><input id="set-llm-model" placeholder="gpt-4o-mini" /></label>
+          <label class="field"><span>API key</span><input id="set-llm-key" type="password" placeholder="sk-..." autocomplete="off" /></label>
+          <div class="row">
+            <button class="btn" id="btn-save-llm">Сохранить LLM</button>
+            <span class="engine" id="engine-label">движок: —</span>
+          </div>
+        </section>
+      </aside>
+
+      <!-- ================= ЦЕНТР: чат ================= -->
+      <section class="col col-chat card">
+        <div class="card-head">
+          <h2>Чат с ИИ</h2>
+          <div class="row">
+            <label class="switch" title="Автоматически выполнять команды модели">
+              <input type="checkbox" id="chk-autorun" checked /><span></span>
+            </label>
+            <span class="hint inline">авто-выполнение [EXECUTE]</span>
+            <button class="btn ghost sm" id="btn-clear-chat">очистить</button>
+          </div>
+        </div>
+
+        <div class="chat-log" id="chat-log">
+          <div class="msg system">
+            <div class="msg-body">
+              <p>
+                Это тренировочный чат: он прогоняет <b>ровно тот же цикл</b>, что и расширение в
+                настоящем ChatGPT — ответ модели → поиск блока <code>[EXECUTE]</code> → выполнение в
+                терминале → подстановка вывода обратно.
+              </p>
+              <p class="muted">
+                Напиши задачу («создай проект», «посмотри, что в папке», «поставь зависимости») или
+                вставь сюда ответ своей модели.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="chat-approve" id="chat-approve" hidden>
+          <div class="approve-body">
+            <b>Модель просит выполнить:</b>
+            <pre class="mono" id="approve-cmd"></pre>
+          </div>
+          <div class="row">
+            <button class="btn ok" id="btn-approve">Разрешить</button>
+            <button class="btn danger" id="btn-deny">Отклонить</button>
+          </div>
+        </div>
+
+        <form class="chat-input" id="chat-form">
+          <textarea id="chat-text" rows="2" placeholder="Задача для агента… (Enter — отправить, Shift+Enter — новая строка)"></textarea>
+          <button class="btn primary" type="submit" id="btn-send">Отправить</button>
+        </form>
+      </section>
+
+      <!-- ================= ПРАВО: терминал ================= -->
+      <section class="col col-term card">
+        <div class="card-head">
+          <h2>Терминал <span class="tag" id="term-state">ожидание</span></h2>
+          <div class="row">
+            <button class="btn ghost sm" id="btn-abort" title="Прервать текущую команду">■ стоп</button>
+            <button class="btn ghost sm" id="btn-clear-term">очистить</button>
+          </div>
+        </div>
+        <div class="term" id="term"></div>
+        <form class="term-input" id="term-form">
+          <span class="prompt-sign mono" id="term-prompt">$</span>
+          <input id="term-text" class="mono" placeholder="ручная команда (не от ИИ)" autocomplete="off" spellcheck="false" />
+        </form>
+      </section>
+    </main>
+
+    <footer class="statusbar">
+      <span id="status-text">подключение…</span>
+      <span class="mono" id="status-token"></span>
+    </footer>
+
+    <div class="token-gate" id="token-gate" hidden>
+      <div class="gate-card">
+        <h2>Нужен токен моста</h2>
+        <p class="hint">
+          Мост выполняет команды на твоём компьютере, поэтому закрыт токеном.
+          Он напечатан в консоли, где запущен <code>node bin/cli.js</code>, и лежит в
+          <code>~/.ai-agent-in-browser/config.json</code>.
+        </p>
+        <form id="token-form" onsubmit="return false">
+          <input id="token-input" placeholder="вставь токен" autocomplete="off" />
+          <button class="btn primary" type="submit">Войти</button>
+        </form>
+        <button class="btn ok" id="btn-open-login" type="button" hidden>
+          Сервер запущен с --insecure — войти без токена
+        </button>
+        <pre class="gate-diag mono" id="gate-diag"></pre>
+        <p class="hint" id="token-error"></p>
+      </div>
+    </div>
+
+    <script src="/assets/parser.js"></script>
+    <script src="/assets/app.js"></script>
+  </body>
+</html>

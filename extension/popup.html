@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <div class="logo">▚</div>
+      <div>
+        <h1>AI Agent in Browser</h1>
+        <p id="sub">мост к локальному терминалу</p>
+      </div>
+    </header>
+
+    <section class="status" id="status">
+      <span class="dot" id="dot"></span>
+      <span id="status-text">проверяю мост…</span>
+    </section>
+
+    <section class="grid">
+      <label class="switch">
+        <input type="checkbox" id="enabled" />
+        <span></span>
+        <span class="lbl">Работает на этом сайте</span>
+      </label>
+      <label class="switch">
+        <input type="checkbox" id="autosubmit" />
+        <span></span>
+        <span class="lbl">Отправлять вывод автоматически</span>
+      </label>
+    </section>
+
+    <section class="card">
+      <h2>Мост</h2>
+      <label><span>Адрес</span><input id="url" placeholder="http://127.0.0.1:7788" /></label>
+      <label><span>Токен</span><input id="token" type="password" placeholder="из вывода node bin/cli.js" /></label>
+      <label><span>Подтверждение команд</span>
+        <select id="approval">
+          <option value="auto">auto — выполнять сразу</option>
+          <option value="confirm">confirm — спрашивать в панели</option>
+        </select>
+      </label>
+      <div class="row">
+        <button class="btn primary" id="save">Сохранить</button>
+        <button class="btn" id="check">Проверить</button>
+      </div>
+      <p class="info" id="shell-info"></p>
+    </section>
+
+    <section class="card">
+      <h2>Системный промпт</h2>
+      <p class="hint">Вставь первым сообщением в чат — иначе модель скажет, что у неё нет терминала.</p>
+      <div class="row">
+        <button class="btn primary" id="copy-prompt">Скопировать промпт</button>
+        <button class="btn" id="copy-nudge">Напоминание</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="row">
+        <button class="btn" id="rescan">⟳ Пересканировать страницу</button>
+        <button class="btn" id="panel">Открыть панель моста</button>
+      </div>
+    </section>
+
+    <footer>
+      <span id="adapter"></span>
+      <span id="version"></span>
+    </footer>
+
+    <script src="adapters.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>
