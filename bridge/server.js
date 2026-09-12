@@ -396,6 +396,13 @@ async function route(req, res, url, bridge, opts) {
     return sendJson(res, 200, { authorized: authorized(url, req, bridge), tokenHint: bridge.token.slice(-4) });
   }
 
+  // Токен для само-входа панели ТОЛЬКО в режиме --preview (песочницы/демо).
+  // Без флага эндпоинт не существует — панель требует ввести токен вручную.
+  if (p === '/api/preview-token' && req.method === 'GET') {
+    if (opts && opts.preview) return sendJson(res, 200, { token: bridge.token });
+    return sendJson(res, 404, { error: 'not found' });
+  }
+
   // ---- панель -----------------------------------------------------------
   if (p === '/' || p === '/index.html') {
     const file = path.join(WEB_DIR, 'index.html');

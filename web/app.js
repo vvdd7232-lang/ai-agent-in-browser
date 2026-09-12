@@ -612,7 +612,23 @@ async function boot0() {
   connectWs();
 }
 
-(function init() {
+async function tryPreviewToken() {
+  // В режиме --preview сервер отдаёт токен сам, чтобы панель в песочнице
+  // логинилась без ручного ввода. Без флага эндпоинт возвращает 404.
+  try {
+    const res = await fetch('/api/preview-token');
+    if (!res.ok) return false;
+    const data = await res.json();
+    if (data && data.token) {
+      state.token = data.token;
+      localStorage.setItem('agent-token', data.token);
+      return true;
+    }
+  } catch {}
+  return false;
+}
+
+(async function init() {
   bind();
   const urlToken = new URLSearchParams(location.search).get('token');
   if (urlToken) {
@@ -621,8 +637,11 @@ async function boot0() {
     history.replaceState(null, '', location.pathname);
   }
   if (!state.token) {
-    showGate();
-    return;
+    const ok = await tryPreviewToken();
+    if (!ok) {
+      showGate();
+      return;
+    }
   }
   boot0().catch(() => showGate('Токен неверный'));
 })();
