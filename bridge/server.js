@@ -413,6 +413,7 @@ async function route(req, res, url, bridge, opts) {
     // --preview: для песочниц/демо пробрасываем токен в страницу без query.
     // По умолчанию выключено — панель требует токен.
     const ok = authorized(url, req, bridge) || !!(opts && opts.preview);
+    console.log(`[panel] host=${req.headers.host} ok=${ok} insecure=${!!bridge.insecure}`);
     const bootstrap = {
       token: ok ? bridge.token : null,
       open: !!bridge.insecure,
