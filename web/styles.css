@@ -350,3 +350,25 @@ textarea { resize: vertical; font-family: var(--sans); }
   .col { overflow: visible; }
   .col-chat, .col-term { min-height: 460px; }
 }
+
+/* ---------------- hint: распакованное расширение ---------------- */
+.ext-hint {
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: #0a111c;
+  border: 1px solid var(--line-soft);
+  border-radius: 9px;
+}
+.ext-hint-title { font-weight: 600; font-size: 12.5px; margin-bottom: 6px; }
+.ext-path {
+  display: block;
+  margin: 6px 0;
+  padding: 7px 9px;
+  background: #080b11;
+  border: 1px solid var(--line-soft);
+  border-radius: 7px;
+  font-size: 11px;
+  color: #9fd0ff;
+  word-break: break-all;
+  user-select: all;
+}

@@ -11,6 +11,7 @@ const { WebSocketServer } = require('./ws');
 const { extractCommand, inspectCommand, truncateOutput, formatTerminalReply, stripAnsi } = require('./parser');
 const { buildSystemPrompt } = require('./prompt');
 const { streamChat, demoAssistant } = require('./llm');
+const { readAsset, getEmbedded } = require('./assets');
 
 const VERSION = require('../package.json').version;
 const WEB_DIR = path.join(__dirname, '..', 'web');
@@ -60,6 +61,8 @@ class Bridge {
     this.results = new Map(); // id -> result
     this.server = null;
     this.stats = { startedAt: Date.now(), executed: 0, denied: 0 };
+    // Куда распаковано расширение (для .exe) — выставляется cli.js после extractExtension.
+    this.extensionDir = null;
   }
 
   get token() {
@@ -81,6 +84,7 @@ class Bridge {
   state() {
     return {
       version: VERSION,
+      extensionDir: this.extensionDir,
       config: this.store.publicConfig(),
       shell: this.shell.info(),
       stats: { ...this.store.stats(), ...this.stats },
@@ -310,6 +314,12 @@ function createServer(bridge, opts = {}) {
     try {
       await route(req, res, url, bridge, opts);
     } catch (err) {
+      // если ответ уже пошёл в клиент (например, стрим SSE), заголовки
+      // переписать нельзя — просто рвём соединение, не роняя сервер
+      if (res.headersSent) {
+        res.destroy();
+        return;
+      }
       const status = err.code === 'NOT_FOUND' ? 404 : err.code === 'BAD_REQUEST' ? 400 : err.code === 'UNAUTHORIZED' ? 401 : 500;
       sendJson(res, status, { error: String(err && err.message), code: err.code });
     }
@@ -354,32 +364,67 @@ function sendJson(res, status, obj) {
 }
 
 async function readJson(req, limit = 2 * 1024 * 1024) {
-  const chunks = [];
-  let size = 0;
-  for await (const c of req) {
-    size += c.length;
-    if (size > limit) {
-      const err = new Error('Слишком большое тело запроса');
-      err.code = 'BAD_REQUEST';
-      throw err;
-    }
-    chunks.push(c);
-  }
-  if (!chunks.length) return {};
-  try {
-    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
-  } catch {
-    const err = new Error('Тело запроса не является JSON');
-    err.code = 'BAD_REQUEST';
-    throw err;
-  }
+  // Собираем тело по событиям, а не через for-await: async-итерация
+  // IncomingMessage не поддерживается во всех рантаймах (bun-compile).
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    let done = false;
+    const fail = (err) => {
+      if (done) return;
+      done = true;
+      req.destroy();
+      reject(err);
+    };
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > limit) {
+        const err = new Error('Слишком большое тело запроса');
+        err.code = 'BAD_REQUEST';
+        return fail(err);
+      }
+      chunks.push(c);
+    });
+    req.on('end', () => {
+      if (done) return;
+      done = true;
+      if (!chunks.length) return resolve({});
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+      } catch {
+        const err = new Error('Тело запроса не является JSON');
+        err.code = 'BAD_REQUEST';
+        reject(err);
+      }
+    });
+    req.on('error', (err) => fail(err));
+  });
 }
 
 function safeStatic(target) {
-  const root = fs.realpathSync(WEB_DIR);
+  // В собранном .exe WEB_DIR живёт во встроенной ФС — realpathSync может
+  // упасть на «нереальном» пути, тогда просто резолвим как есть.
+  let root;
+  try {
+    root = fs.realpathSync(WEB_DIR);
+  } catch {
+    root = path.resolve(WEB_DIR);
+  }
   const full = path.resolve(root, '.' + path.posix.normalize('/' + target.replace(/^\/+/, '')));
   if (full !== root && !full.startsWith(root + path.sep)) return null;
   return full;
+}
+
+/**
+ * Статика панели: dev — с диска (с защитой от выхода за web/),
+ * .exe — из встроенного манифеста. Возвращает Buffer или null.
+ */
+function readWebAsset(rel) {
+  const clean = String(rel || '').replace(/^\/+/, '').split('/').filter(Boolean).join('/');
+  if (!clean || clean.split('/').some((s) => s === '.' || s === '..')) return null;
+  const full = safeStatic(clean);
+  if (full && fs.existsSync(full) && fs.statSync(full).isFile()) return fs.readFileSync(full);
+  return getEmbedded('web/' + clean);
 }
 
 async function route(req, res, url, bridge, opts) {
@@ -409,8 +454,7 @@ async function route(req, res, url, bridge, opts) {
 
   // ---- панель -----------------------------------------------------------
   if (p === '/' || p === '/index.html') {
-    const file = path.join(WEB_DIR, 'index.html');
-    let html = fs.readFileSync(file, 'utf8');
+    let html = readAsset('web/index.html').toString('utf8');
     // --preview: для песочниц/демо пробрасываем токен в страницу без query.
     // По умолчанию выключено — панель требует токен.
     const ok = authorized(url, req, bridge) || !!(opts && opts.preview);
@@ -433,15 +477,17 @@ async function route(req, res, url, bridge, opts) {
     // парсер отдаём прямо из bridge/, чтобы браузер и расширение использовали
     // ровно тот же код, что и сервер
     if (p === '/assets/parser.js') {
-      const parserFile = path.join(__dirname, 'parser.js');
+      // читаем ДО writeHead: в .exe чтение из встроенного манифеста может
+      // бросить, и тогда заголовки уже не поправить
+      const buf = readAsset('bridge/parser.js');
       res.writeHead(200, { 'content-type': MIME['.js'], 'cache-control': 'no-cache' });
-      return res.end(fs.readFileSync(parserFile));
+      return res.end(buf);
     }
-    const file = safeStatic(p.replace('/assets/', ''));
-    if (!file || !fs.existsSync(file) || fs.statSync(file).isDirectory()) return sendJson(res, 404, { error: 'not found' });
-    const ext = path.extname(file).toLowerCase();
+    const buf = readWebAsset(p.replace(/^\/assets\//, ''));
+    if (!buf) return sendJson(res, 404, { error: 'not found' });
+    const ext = path.extname(p).toLowerCase();
     res.writeHead(200, { 'content-type': MIME[ext] || 'application/octet-stream', 'cache-control': 'no-cache' });
-    return res.end(fs.readFileSync(file));
+    return res.end(buf);
   }
 
   // ---- API --------------------------------------------------------------

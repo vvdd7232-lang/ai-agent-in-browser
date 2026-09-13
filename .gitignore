@@ -7,6 +7,8 @@ node_modules/
 dist/
 out/
 coverage/
+build/
+release/
 
 # рантайм-данные моста (если кто-то запустит его прямо из репозитория)
 .data/

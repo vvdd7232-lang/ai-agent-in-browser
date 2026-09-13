@@ -1,17 +1,36 @@
 #!/usr/bin/env node
 'use strict';
 
+const fs = require('node:fs');
 const path = require('node:path');
 const { Bridge, createServer } = require('../bridge/server');
 const { defaultDataDir, detectPlatform } = require('../bridge/shell');
 const { syncParser } = require('../scripts/build-extension');
 const { openBrowser } = require('../bridge/open');
+const { extractExtension } = require('../bridge/extract');
+const { ROOT: APP_ROOT } = require('../bridge/assets');
+
+/**
+ * «Репозиторий есть на диске». В dev (node bin/cli.js) — да. В собранном
+ * .exe — нет: __dirname указывает на путь исходников на машине сборки,
+ * а все ресурсы лежат внутри самого исполняемого файла.
+ */
+const HAS_REPO_ON_DISK = (() => {
+  try {
+    return fs.existsSync(path.join(APP_ROOT, 'web', 'index.html'));
+  } catch {
+    return false;
+  }
+})();
 
 // чтобы папку extension/ можно было грузить в Chrome «как есть»,
-// держим её копию парсера свежей на каждый запуск моста
-try {
-  syncParser(false);
-} catch {}
+// держим её копию парсера свежей на каждый запуск моста (только в dev:
+// в .exe записывать в «репозиторий» нельзя, расширение туда не входит).
+if (HAS_REPO_ON_DISK) {
+  try {
+    syncParser(false);
+  } catch {}
+}
 
 const HELP = `
 ai-agent-in-browser — мост между ИИ-чатом в браузере и твоим терминалом
@@ -97,14 +116,24 @@ function parseArgs(argv) {
   return out;
 }
 
-const C = {
-  bold: (s) => `\x1b[1m${s}\x1b[0m`,
-  dim: (s) => `\x1b[2m${s}\x1b[0m`,
-  green: (s) => `\x1b[32m${s}\x1b[0m`,
-  cyan: (s) => `\x1b[36m${s}\x1b[0m`,
-  yellow: (s) => `\x1b[33m${s}\x1b[0m`,
-  red: (s) => `\x1b[31m${s}\x1b[0m`,
-};
+// Цвета в консоли. На старом Windows-консоли (conhost) ANSI-коды без
+// ENABLE_VIRTUAL_TERMINAL_PROCESSING выводятся мусором — поэтому в win32
+// включаем их только если понятно, что терминал современный
+// (Windows Terminal / ConEmu / VSCode / явный TERM=xterm).
+const winAnsiOk =
+  process.platform !== 'win32' ||
+  !!(process.env.WT_SESSION || process.env.ConEmuTask || process.env.TERM_PROGRAM || process.env.TERM === 'xterm-256color');
+const NOOP = (s) => s;
+const C = winAnsiOk
+  ? {
+      bold: (s) => `\x1b[1m${s}\x1b[0m`,
+      dim: (s) => `\x1b[2m${s}\x1b[0m`,
+      green: (s) => `\x1b[32m${s}\x1b[0m`,
+      cyan: (s) => `\x1b[36m${s}\x1b[0m`,
+      yellow: (s) => `\x1b[33m${s}\x1b[0m`,
+      red: (s) => `\x1b[31m${s}\x1b[0m`,
+    }
+  : { bold: NOOP, dim: NOOP, green: NOOP, cyan: NOOP, yellow: NOOP, red: NOOP };
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
@@ -130,6 +159,21 @@ async function main() {
   const port = bridge.store.config.port;
   bridge.start();
 
+  // Где лежит папка расширения для Chrome.
+  // В .exe вся программа — один файл, поэтому расширение распаковывается
+  // в каталог данных; в режиме «из репозитория» показываем сам каталог extension/.
+  if (HAS_REPO_ON_DISK) {
+    bridge.extensionDir = path.join(APP_ROOT, 'extension');
+  } else {
+    try {
+      const ext = extractExtension(bridge.dataDir);
+      bridge.extensionDir = ext.dir;
+      if (ext.changed) console.log(C.dim('  ✓ расширение обновлено в каталоге данных'));
+    } catch (err) {
+      console.error(C.red('  ! Не удалось распаковать расширение: ' + (err && err.message)));
+    }
+  }
+
   const server = createServer(bridge, { preview: !!args.preview });
   await new Promise((resolve, reject) => {
     server.once('error', reject);
@@ -151,6 +195,10 @@ async function main() {
   console.log(`  ${C.green('●')} Подтверждение ${bridge.store.config.approvalMode === 'auto' ? C.yellow('auto (выполнять сразу)') : bridge.store.config.approvalMode === 'confirm' ? C.yellow('confirm (спрашивать)') : C.red('off (без проверок)')}`);
   console.log(`  ${C.green('●')} Токен         ${bridge.token}`);
   console.log(`  ${C.green('●')} Конфиг        ${bridge.dataDir}`);
+  if (bridge.extensionDir) {
+    console.log(`  ${C.green('●')} Расширение    ${bridge.extensionDir}`);
+    console.log(C.dim('    chrome://extensions → «Режим разработчика» → «Загрузить распакованное» → выбери эту папку'));
+  }
   if (host !== '127.0.0.1' && host !== 'localhost') {
     console.log('');
     console.log(C.red('  ! Мост слушает не только loopback: любой, кто достучится до этого'));
@@ -201,4 +249,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { parseArgs };
+module.exports = { parseArgs, main };

@@ -439,6 +439,14 @@ function handleEvent(msg) {
 async function refreshState() {
   try {
     const s = await api('/api/state');
+    if (s.extensionDir) {
+      const hint = $('#ext-hint');
+      if (hint) {
+        hint.hidden = false;
+        const p = $('#ext-path');
+        if (p && p.textContent !== s.extensionDir) p.textContent = s.extensionDir;
+      }
+    }
     $('#pill-cwd').textContent = s.shell.cwd;
     $('#term-prompt').textContent = shortPrompt(s.shell.cwd);
     $('#pill-count').textContent = `${s.stats.total} cmd · ${s.stats.failed} err`;

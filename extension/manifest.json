@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "AI Agent in Browser",
   "short_name": "AI Agent",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Даёт обычному ИИ-чату в браузере доступ к локальному терминалу: находит блоки [EXECUTE] в ответах модели, выполняет их через программу-мост и возвращает вывод обратно в чат.",
   "homepage_url": "https://github.com/vvdd7232-lang/ai-agent-in-browser",
 
