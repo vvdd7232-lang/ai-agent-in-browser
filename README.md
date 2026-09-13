@@ -70,12 +70,13 @@ bridge/shell.js       живая shell-сессия + корректное пр�
 bridge/parser.js      разбор [EXECUTE] / ANSI / обрезка вывода (общий для Node и браузера)
 bridge/prompt.js      системный промпт (подставляет ОС, shell, cwd)
 bridge/llm.js         необязательный LLM-клиент + демо-ассистент
+bridge/open.js        кроссплатформенное открытие панели в браузере
 bridge/ws.js          минимальный WebSocket-сервер (RFC 6455)
 bridge/store.js       конфиг + история (~/.ai-agent-in-browser/)
 web/                  панель управления (без сборки)
 extension/            Chrome MV3 расширение (content + background + popup)
 scripts/              генерация иконок и синхронизация parser.js в расширение
-tests/                node:test (парсер, shell, HTTP)
+tests/                node:test (парсер, shell, HTTP, панель)
 ```
 
 ## Как мост выполняет команды
@@ -131,10 +132,36 @@ node bin/cli.js [--port 7788] [--host 127.0.0.1] [--cwd <путь>]
 ## Разработка
 
 ```bash
-npm test                # 32 теста: парсер + shell + HTTP
+npm test                # 52 теста: парсер + shell + HTTP + панель + CLI
 npm run build:ext       # пересоздать extension/parser.js и иконки
 node bin/cli.js         # авто-синхронизирует parser.js в расширение при старте
 ```
+
+## Сборка в один файл (.exe)
+
+Мост можно собрать в ОДИН исполняемый файл, которому не нужен установленный Node —
+двойной клик, и панель открыта:
+
+```bash
+npm i -D esbuild postject     # только для сборки, для работы не нужны
+npm run build:exe             # -> dist/ai-agent-in-browser.exe   (Windows x64)
+npm run build:exe:linux       # -> dist/ai-agent-in-browser-linux (Linux x64)
+```
+
+Это Node SEA (single executable application): esbuild собирает проект в один бандл,
+`node --experimental-sea-config` зашивает туда же панель (`web/`) и копию парсера,
+postject внедряет блоб в копию node-бинарника. Бинарник качается из npm-пакетов
+`node-win-x64` / `node-linux-x64`, поэтому **.exe собирается из-под любой ОС** —
+Windows для сборки не нужен. Перед внедрением скрипт снимает подпись node.exe
+(аналог `signtool remove-signature`): иначе Windows видит битую подпись.
+
+Внутри такого файла нет ни `web/`, ни `bridge/` — их читает `bridge/assets.js`,
+который прозрачно работает и с диском, и с SEA-ассетами.
+
+> Расширение в .exe не упаковывается: Chrome с версии 137 запретил устанавливать
+> расширения иначе как вручную (`chrome://extensions` → *Load unpacked*), флага
+> `--load-extension` больше нет. Поэтому папку `extension/` по-прежнему нужно
+> загрузить один раз руками.
 
 ## Дорожная карта
 

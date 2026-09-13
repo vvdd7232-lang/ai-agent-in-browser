@@ -70,6 +70,10 @@ class Store {
       else if (k in DEFAULTS) next[k] = v;
     }
     if (!['auto', 'confirm', 'off'].includes(next.approvalMode)) next.approvalMode = 'auto';
+    // порт и хост приходят из CLI: `--port abc` не должен ронять мост
+    // с загадочным ERR_SOCKET_BAD_PORT на listen()
+    next.port = Math.max(1, Math.min(65535, Number(next.port) || DEFAULTS.port));
+    if (typeof next.host !== 'string' || !next.host.trim()) next.host = DEFAULTS.host;
     next.maxOutputChars = Math.max(500, Math.min(200000, Number(next.maxOutputChars) || DEFAULTS.maxOutputChars));
     next.commandTimeoutMs = Math.max(1000, Math.min(3600000, Number(next.commandTimeoutMs) || DEFAULTS.commandTimeoutMs));
     this.config = next;

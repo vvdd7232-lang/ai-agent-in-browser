@@ -70,7 +70,11 @@ function ansiToHtml(raw) {
   };
 
   let openClass = openTags();
-  if (openClass) out += `<span class="${openClass}">`;
+  let opened = false;
+  if (openClass) {
+    out += `<span class="${openClass}">`;
+    opened = true;
+  }
 
   while (rest.length) {
     const m = ANSI_SPLIT.exec(rest);
@@ -103,23 +107,25 @@ function ansiToHtml(raw) {
       else if (c >= 40 && c <= 47) st.bg = true;
     }
 
-    out += '</span>';
+    // закрывающий тег — только если действительно есть что закрывать,
+    // иначе в innerHTML уезжали лишние </span>
+    if (opened) out += '</span>';
     openClass = openTags();
-    out += openClass ? `<span class="${openClass}">` : '';
-    if (!openClass) {
-      // держим баланс тегов: следующий открывающий добавится при новом стиле
-      out += '';
+    if (openClass) {
+      out += `<span class="${openClass}">`;
+      opened = true;
+    } else {
+      opened = false;
     }
   }
-  if (openClass) out += '</span>';
+  if (opened) out += '</span>';
   return out;
 }
 
 function map256(n) {
   if (n === undefined) return null;
-  if (n < 8) return n;
-  if (n < 16) return n - 8 + 8;
-  return 7;
+  if (n < 16) return n; // 0..15 — базовая и яркая палитры, классы a-fg-0…a-fg-15
+  return 7; // остальные 240 цветов — в ближайший «обычный» белый
 }
 function mapRgb(r, g, b) {
   if (r === undefined) return null;
@@ -273,7 +279,12 @@ async function runAgentLoop(userText) {
   state.chat.push({ role: 'user', content: userText });
 
   try {
-    while (state.steps < state.maxSteps && !state.abortLoop) {
+    let hitLimit = false;
+    while (!state.abortLoop) {
+      if (state.steps >= state.maxSteps) {
+        hitLimit = true;
+        break;
+      }
       state.steps += 1;
 
       // 1) ответ модели
@@ -305,25 +316,56 @@ async function runAgentLoop(userText) {
       const chip = addCommandChip(found.command, 'ждём', false);
       const inspection = P.inspectCommand(found.command);
 
+      let approvedByUser = false;
       if (!$('#chk-autorun').checked || inspection.dangerous) {
-        const approved = await askApproval(found.command, inspection.reasons);
-        if (!approved) {
+        approvedByUser = await askApproval(found.command, inspection.reasons);
+        if (!approvedByUser) {
           updateChip(chip, 'отклонено', true);
           const denial = P.formatTerminalReply({ command: found.command, output: '', exitCode: -1, cwd: null, denied: true });
+          addMessage('terminal', denial);
           state.chat.push({ role: 'user', content: denial });
           continue;
         }
       }
 
+      // Пользователь уже разрешил команду здесь, в чате — мосту повторно
+      // спрашивать нечего. Раньше уходило mode:'auto', мост держал опасную
+      // команду в awaiting-approval, панель весь long-poll ждала, а потом
+      // рапортовала модели об «ошибке» команды, которая даже не запускалась.
       const started = await api('/api/execute', {
         method: 'POST',
-        body: { command: found.command, source: 'panel-chat', mode: $('#chk-autorun').checked ? 'auto' : 'confirm' },
+        body: {
+          command: found.command,
+          source: 'panel-chat',
+          mode: approvedByUser ? 'off' : 'auto',
+        },
       });
       updateChip(chip, 'выполняется', false);
 
-      const entry = await api(`/api/result/${started.id}?wait=55000`);
-      const r = entry.result || {};
-      const failed = r.denied || r.exitCode !== 0;
+      let entry = await api(`/api/result/${started.id}?wait=55000`);
+      if (entry.status === 'awaiting-approval') {
+        // мост всё равно ждёт решения (например, в настройках включён confirm) —
+        // согласие пользователя у нас уже есть, отдаём его мосту
+        await api('/api/decision', { method: 'POST', body: { id: started.id, approve: true } });
+        entry = await api(`/api/result/${started.id}?wait=55000`);
+      }
+
+      if (!entry.result) {
+        // результата нет — честно сообщаем модели, а не выдумываем exit code
+        updateChip(chip, entry.status || 'нет результата', true);
+        const stalled = P.formatTerminalReply({
+          command: found.command,
+          output: `Мост не вернул результат (статус: ${entry.status || 'неизвестен'}). Команда не выполнена.`,
+          exitCode: -1,
+          cwd: null,
+        });
+        addMessage('terminal', stalled);
+        state.chat.push({ role: 'user', content: stalled });
+        continue;
+      }
+
+      const r = entry.result;
+      const failed = !!r.denied || r.exitCode !== 0;
       updateChip(chip, failed ? `exit ${r.exitCode}` : `ok · ${r.durationMs}мс`, failed);
 
       // 4) подставляем вывод обратно в диалог — ровно как это делает расширение
@@ -332,7 +374,7 @@ async function runAgentLoop(userText) {
       state.chat.push({ role: 'user', content: reply });
     }
 
-    if (state.steps >= state.maxSteps) {
+    if (hitLimit) {
       addMessage('system', `Достигнут лимит в ${state.maxSteps} шагов — цикл остановлен.`);
     }
   } catch (err) {
@@ -401,9 +443,14 @@ function handleEvent(msg) {
       $('#term-state').textContent = 'выполняется';
       setPill('#pill-shell', 'busy', 'shell занят');
       break;
-    case 'output':
-      if (msg.clean) termOutput(msg.clean);
+    case 'output': {
+      // chunk — сырой вывод вместе с ANSI-кодами, ansiToHtml их раскрашивает;
+      // clean (текст без кодов) мост отправляет модели. Раньше терминал
+      // рисовал clean, и весь конвертер цветов просто не получал работу.
+      const text = msg.chunk == null ? msg.clean : msg.chunk;
+      if (text) termOutput(text);
       break;
+    }
     case 'command-end': {
       const cls = msg.exitCode === 0 ? 't-ok' : 't-err';
       const label = msg.timedOut ? 'ПРЕВЫШЕН ТАЙМАУТ' : `exit ${msg.exitCode}`;

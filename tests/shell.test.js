@@ -87,6 +87,46 @@ test('shell: фоновый процесс тоже убивается по та
   s.close();
 });
 
+test('shell: служебный сентинел не утекает в live-лог (событие output)', async () => {
+  const s = new ShellSession({ cwd: tmpDir() });
+  s.start();
+  const seen = [];
+  s.on('output', (e) => seen.push(e.clean));
+  const r = await s.run('echo marker-check');
+  assert.strictEqual(r.output.trim(), 'marker-check');
+  assert.ok(seen.length > 0, 'события output должны приходить');
+  assert.ok(
+    !seen.some((t) => String(t).includes('__AIAGENT_BRIDGE_')),
+    'внутренний маркер моста не должен попадать в терминал: ' + JSON.stringify(seen)
+  );
+  s.close();
+});
+
+test('shell: abort считает каждый убитый процесс один раз', async () => {
+  const s = new ShellSession({ cwd: tmpDir() });
+  s.start();
+  // процесс игнорирует SIGTERM — его приходится добивать SIGKILL;
+  // раньше он попадал в счётчик и за TERM, и за KILL (killed = 2 вместо 1)
+  const stubborn = 'bash -c \'trap "" TERM; while :; do :; done\'';
+  const r = await s.run(stubborn, { timeoutMs: 600 });
+  assert.ok(r.timedOut);
+  assert.strictEqual(r.killed, 1, 'запущен один процесс, killed=' + r.killed);
+  s.close();
+});
+
+test('shell: close() завершает текущую команду и очередь, а не вешает обещания', async () => {
+  const s = new ShellSession({ cwd: tmpDir() });
+  s.start();
+  const current = s.run('sleep 5');
+  const queued = s.run('echo never');
+  setTimeout(() => s.close(), 200);
+
+  const res = await current; // до фикса это обещание не разрешалось никогда
+  assert.strictEqual(res.interrupted, true);
+  assert.strictEqual(res.exitCode, -1);
+  await assert.rejects(() => queued, /закрыта/i);
+});
+
 test('shell: changeDir валидирует путь', async () => {
   const s = new ShellSession({ cwd: tmpDir() });
   s.start();

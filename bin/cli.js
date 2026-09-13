@@ -6,12 +6,16 @@ const { Bridge, createServer } = require('../bridge/server');
 const { defaultDataDir, detectPlatform } = require('../bridge/shell');
 const { syncParser } = require('../scripts/build-extension');
 const { openBrowser } = require('../bridge/open');
+const { isPacked } = require('../bridge/assets');
 
 // чтобы папку extension/ можно было грузить в Chrome «как есть»,
-// держим её копию парсера свежей на каждый запуск моста
-try {
-  syncParser(false);
-} catch {}
+// держим её копию парсера свежей на каждый запуск моста.
+// В собранном .exe рядом ничего нет (весь проект внутри одного файла) — пропускаем.
+if (!isPacked()) {
+  try {
+    syncParser(false);
+  } catch {}
+}
 
 const HELP = `
 ai-agent-in-browser — мост между ИИ-чатом в браузере и твоим терминалом
@@ -82,16 +86,23 @@ function parseArgs(argv) {
       case '-open-access':
         out.insecure = true;
         break;
-      default:
-        if (a.startsWith('-port=')) out.port = parseInt(a.split('=')[1], 10);
-        else if (a.startsWith('-host=')) out.host = a.split('=')[1];
-        else if (a.startsWith('-cwd=')) out.cwd = path.resolve(a.split('=')[1]);
-        else if (a.startsWith('-approval=')) out.approval = a.split('=')[1];
+      default: {
+        // форма `--опция=значение`; значение берём целиком — в нём может быть '='
+        const eq = a.indexOf('=');
+        const name = eq === -1 ? a : a.slice(0, eq);
+        const value = eq === -1 ? '' : a.slice(eq + 1);
+        if (name === '-port' && value) out.port = parseInt(value, 10);
+        else if (name === '-host' && value) out.host = value;
+        else if (name === '-cwd' && value) out.cwd = path.resolve(value);
+        else if (name === '-token' && value) out.token = value;
+        else if (name === '-approval' && value) out.approval = value;
+        else if (name === '-data-dir' && value) out.dataDir = path.resolve(value);
         else if (a === '-open') out.open = true;
         else {
           console.error(`Неизвестная опция: ${argv[i]}`);
           process.exit(2);
         }
+      }
     }
   }
   return out;
@@ -188,8 +199,11 @@ async function main() {
   process.on('SIGTERM', shutdown);
 }
 
-if (require.main === module) {
-  main().catch((err) => {
+/** Запуск с понятными сообщениями об ошибках. Экспортируется для сборки в .exe. */
+async function run() {
+  try {
+    await main();
+  } catch (err) {
     console.error(C.red('\nНе удалось запустить мост: ') + (err && err.message));
     if (err && err.code === 'EADDRINUSE') {
       console.error(C.red('  Порт занят ДРУГИМ экземпляром моста (или чужой программой).'));
@@ -197,8 +211,16 @@ if (require.main === module) {
       console.error(C.red('  «не работают». Закрой старое окно моста (Ctrl+C) и запусти снова,'));
       console.error(C.red('  либо возьми другой порт: --port 7791'));
     }
+    // .exe запускают двойным кликом: без этого окно закрылось бы мгновенно
+    // и текст ошибки никто не успел бы прочитать
+    if (isPacked() && process.stdin.isTTY) {
+      console.error(C.dim('\n  Нажми Enter, чтобы закрыть окно...'));
+      await new Promise((resolve) => process.stdin.once('data', resolve));
+    }
     process.exit(1);
-  });
+  }
 }
 
-module.exports = { parseArgs };
+if (require.main === module) run();
+
+module.exports = { parseArgs, main, run };

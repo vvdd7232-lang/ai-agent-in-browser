@@ -67,9 +67,10 @@ async function streamChat({ baseUrl, apiKey, model, messages, signal, onDelta })
  * Она выдаёт по одному блоку [EXECUTE] за шаг, ровно как велит системный промпт.
  */
 function demoAssistant(messages) {
-  const terminalSteps = messages.filter((m) => m.role === 'user' && m.content.includes('[TERMINAL]'));
+  const list = Array.isArray(messages) ? messages : [];
+  const terminalSteps = list.filter((m) => m && m.role === 'user' && String(m.content || '').includes('[TERMINAL]'));
   const step = terminalSteps.length;
-  const failed = /\bexit code: (?!0\b)/.test(terminalSteps[step - 1]?.content || '');
+  const failed = /\bexit code: (?!0\b)/.test(String(terminalSteps[step - 1]?.content || ''));
 
   if (failed && step === 1) {
     return `Вижу ошибку в выводе. Проверю, что доступно в системе, прежде чем продолжать:

@@ -92,9 +92,12 @@ function listChildren(pid) {
   return null; // неизвестно — вызывающий код сам решит, что делать
 }
 
-/** Убивает дерево потомков pid, НЕ трогая сам pid. Возвращает число убитых. */
-async function killDescendants(pid, signal = 'SIGTERM') {
-  if (process.platform === 'win32') return 0;
+/**
+ * Все PID-потомки процесса (без самого pid), без дублей.
+ * На Windows возвращает пустой список — там дерево прибивается одним taskkill /T.
+ */
+async function collectDescendants(pid) {
+  if (process.platform === 'win32') return [];
   let direct = listChildren(pid);
   if (direct === null) {
     direct = await new Promise((resolve) => {
@@ -120,12 +123,38 @@ async function killDescendants(pid, signal = 'SIGTERM') {
     const kids = listChildren(cur) || [];
     stack.push(...kids);
   }
+  return all;
+}
+
+/** Жив ли ещё процесс (signal 0 ничего не посылает, только проверяет). */
+function isAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err && err.code === 'EPERM'; // процесс есть, но чужой
+  }
+}
+
+/** Убивает дерево потомков pid, НЕ трогая сам pid. Возвращает число убитых. */
+async function killDescendants(pid, signal = 'SIGTERM') {
+  const all = await collectDescendants(pid);
   for (const p of all) {
     try {
       process.kill(p, signal);
     } catch {}
   }
   return all.length;
+}
+
+/** Посылает сигнал; true, если процесс существовал и сигнал ушёл. */
+function tryKill(pid, signal) {
+  try {
+    process.kill(pid, signal);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -260,7 +289,16 @@ class ShellSession extends EventEmitter {
     if (this.pending) {
       this.pending.raw += raw;
       this.pending.output += clean;
-      this.emit('output', { id: this.pending.id, chunk: raw, clean, stream });
+      // Служебный сентинел (`__AIAGENT_BRIDGE_…__|exit=…|cwd=…`) — внутренняя
+      // кухня моста: в результат команды он и так не попадает (_checkMarker
+      // его вырезает), а вот в live-лог панели просачивался. Режем по маркеру.
+      const cut = clean.indexOf(this.pending.marker);
+      const rawCut = raw.indexOf(this.pending.marker);
+      const visible = cut === -1 ? clean : clean.slice(0, cut);
+      const visibleRaw = rawCut === -1 ? raw : raw.slice(0, rawCut);
+      if (visible || visibleRaw) {
+        this.emit('output', { id: this.pending.id, chunk: visibleRaw, clean: visible, stream });
+      }
       this._checkMarker();
     } else {
       this.emit('noise', { clean, stream });
@@ -404,9 +442,18 @@ class ShellSession extends EventEmitter {
       killed = await this._killWindowsTree();
       this.draining = null;
     } else {
-      killed = await killDescendants(this.child.pid, 'SIGTERM');
+      const targets = await collectDescendants(this.child.pid);
+      const signalled = new Set();
+      for (const p of targets) {
+        if (tryKill(p, 'SIGTERM')) signalled.add(p);
+      }
       await sleep(600);
-      killed += await killDescendants(this.child.pid, 'SIGKILL');
+      for (const p of targets) {
+        if (isAlive(p) && tryKill(p, 'SIGKILL')) signalled.add(p);
+      }
+      // Считаем уникальные PID, а не сумму посланных сигналов: раньше процесс,
+      // переживший SIGTERM, учитывался и за SIGTERM, и за SIGKILL (2 вместо 1).
+      killed = signalled.size;
       try {
         this.child.stdin.write(`echo "${resync}"\n`);
       } catch {}
@@ -467,10 +514,22 @@ class ShellSession extends EventEmitter {
 
   close() {
     this.closed = true;
-    if (this.pending && this.pending.timer) clearTimeout(this.pending.timer);
-    this.pending = null;
+    const dropped = this.queue.splice(0, this.queue.length);
+    // Текущую команду и очередь обязательно завершаем: на этих обещаниях
+    // висят HTTP-запросы моста, иначе они не разрешатся никогда.
+    if (this.pending) {
+      this._finishPending({
+        output: this.pending.output,
+        exitCode: -1,
+        interrupted: true,
+      });
+    }
     this.draining = null;
-    this.queue.length = 0;
+    for (const task of dropped) {
+      const err = new Error('Shell-сессия закрыта');
+      err.code = 'SESSION_CLOSED';
+      task.reject(err);
+    }
     if (this.child) {
       const child = this.child;
       this.child = null;
@@ -495,4 +554,4 @@ function defaultDataDir() {
   return process.env.AI_AGENT_DATA_DIR || path.join(os.homedir(), '.ai-agent-in-browser');
 }
 
-module.exports = { ShellSession, detectPlatform, defaultDataDir, killDescendants };
+module.exports = { ShellSession, detectPlatform, defaultDataDir, killDescendants, collectDescendants };

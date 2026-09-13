@@ -1,19 +1,18 @@
 'use strict';
 
 const http = require('node:http');
-const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 
 const { ShellSession, defaultDataDir } = require('./shell');
 const { Store } = require('./store');
 const { WebSocketServer } = require('./ws');
-const { extractCommand, inspectCommand, truncateOutput, formatTerminalReply, stripAnsi } = require('./parser');
+const { extractCommand, inspectCommand, truncateOutput, formatTerminalReply } = require('./parser');
 const { buildSystemPrompt } = require('./prompt');
 const { streamChat, demoAssistant } = require('./llm');
+const { readProject } = require('./assets');
 
 const VERSION = require('../package.json').version;
-const WEB_DIR = path.join(__dirname, '..', 'web');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -48,12 +47,7 @@ class Bridge {
       cwd: this.store.config.cwd || options.cwd || process.cwd(),
       timeoutMs: this.store.config.commandTimeoutMs,
     });
-    this.shell.on('output', (e) => this.broadcast({ type: 'output', ...e }));
-    this.shell.on('command-start', (e) => this.broadcast({ type: 'command-start', ...e }));
-    this.shell.on('command-end', (e) => this.broadcast({ type: 'command-end', ...e }));
-    this.shell.on('restart', (e) => this.broadcast({ type: 'restart', ...e }));
-    this.shell.on('exit', (e) => this.broadcast({ type: 'shell-exit', ...e }));
-    this.shell.on('error', (e) => this.broadcast({ type: 'error', message: String(e && e.message) }));
+    this._wireShell();
 
     this.wss = new WebSocketServer();
     this.pending = new Map(); // id -> {id, command, createdAt, decision, result, waiters}
@@ -98,6 +92,31 @@ class Bridge {
   start() {
     this.shell.start();
     return this;
+  }
+
+  /**
+   * Привязывает события shell к рассылке клиентам.
+   * Отдельный метод потому, что shell пересоздаётся в resetShell() —
+   * без него после /api/reset панель переставала видеть смерть/ошибки shell.
+   */
+  _wireShell() {
+    this.shell.on('output', (e) => this.broadcast({ type: 'output', ...e }));
+    this.shell.on('command-start', (e) => this.broadcast({ type: 'command-start', ...e }));
+    this.shell.on('command-end', (e) => this.broadcast({ type: 'command-end', ...e }));
+    this.shell.on('restart', (e) => this.broadcast({ type: 'restart', ...e }));
+    this.shell.on('exit', (e) => this.broadcast({ type: 'shell-exit', ...e }));
+    this.shell.on('error', (e) => this.broadcast({ type: 'error', message: String(e && e.message) }));
+  }
+
+  /** Перезапускает shell-сессию, сохраняя текущий каталог. */
+  resetShell() {
+    const cwd = this.shell.cwd;
+    this.shell.close();
+    this.shell = new ShellSession({ cwd, timeoutMs: this.store.config.commandTimeoutMs });
+    this._wireShell();
+    this.shell.start();
+    this.broadcast({ type: 'restart', reason: 'manual', ...this.shell.info() });
+    return this.shell.info();
   }
 
   /**
@@ -288,7 +307,6 @@ class Bridge {
 function createServer(bridge, opts = {}) {
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-    const isUpgrade = false;
 
     // CORS: расширению нужно ходить на 127.0.0.1 со страницы https-чата.
     const origin = req.headers.origin;
@@ -335,7 +353,11 @@ function createServer(bridge, opts = {}) {
 
 function authorized(url, req, bridge) {
   if (bridge.insecure) return true; // режим «на свой страх и риск»
+  // Пустой токен не должен означать «вход свободен»: timingSafeEqual
+  // на двух пустых буферах возвращает true.
+  if (!bridge.token) return false;
   const token = req.headers['x-agent-token'] || url.searchParams.get('token');
+  if (!token) return false;
   return timingSafeEqualStr(token, bridge.token);
 }
 
@@ -375,12 +397,7 @@ async function readJson(req, limit = 2 * 1024 * 1024) {
   }
 }
 
-function safeStatic(target) {
-  const root = fs.realpathSync(WEB_DIR);
-  const full = path.resolve(root, '.' + path.posix.normalize('/' + target.replace(/^\/+/, '')));
-  if (full !== root && !full.startsWith(root + path.sep)) return null;
-  return full;
-}
+
 
 async function route(req, res, url, bridge, opts) {
   const p = url.pathname;
@@ -409,8 +426,9 @@ async function route(req, res, url, bridge, opts) {
 
   // ---- панель -----------------------------------------------------------
   if (p === '/' || p === '/index.html') {
-    const file = path.join(WEB_DIR, 'index.html');
-    let html = fs.readFileSync(file, 'utf8');
+    const indexHtml = readProject('web/index.html');
+    if (!indexHtml) return sendJson(res, 500, { error: 'не найден файл панели (web/index.html)' });
+    let html = indexHtml.toString('utf8');
     // --preview: для песочниц/демо пробрасываем токен в страницу без query.
     // По умолчанию выключено — панель требует токен.
     const ok = authorized(url, req, bridge) || !!(opts && opts.preview);
@@ -431,17 +449,14 @@ async function route(req, res, url, bridge, opts) {
 
   if (p.startsWith('/assets/')) {
     // парсер отдаём прямо из bridge/, чтобы браузер и расширение использовали
-    // ровно тот же код, что и сервер
-    if (p === '/assets/parser.js') {
-      const parserFile = path.join(__dirname, 'parser.js');
-      res.writeHead(200, { 'content-type': MIME['.js'], 'cache-control': 'no-cache' });
-      return res.end(fs.readFileSync(parserFile));
-    }
-    const file = safeStatic(p.replace('/assets/', ''));
-    if (!file || !fs.existsSync(file) || fs.statSync(file).isDirectory()) return sendJson(res, 404, { error: 'not found' });
-    const ext = path.extname(file).toLowerCase();
+    // ровно тот же код, что и сервер. В собранном .exe эти файлы лежат не на
+    // диске, а внутри бинарника — readProject() знает про оба случая.
+    const rel = p === '/assets/parser.js' ? 'bridge/parser.js' : 'web/' + p.slice('/assets/'.length);
+    const data = readProject(rel);
+    if (!data) return sendJson(res, 404, { error: 'not found' });
+    const ext = path.extname(rel).toLowerCase();
     res.writeHead(200, { 'content-type': MIME[ext] || 'application/octet-stream', 'cache-control': 'no-cache' });
-    return res.end(fs.readFileSync(file));
+    return res.end(data);
   }
 
   // ---- API --------------------------------------------------------------
@@ -471,7 +486,10 @@ async function route(req, res, url, bridge, opts) {
 
   const resultMatch = /^\/api\/result\/([a-f0-9]+)$/.exec(p);
   if (resultMatch && req.method === 'GET') {
-    const waitMs = Math.min(60000, Math.max(0, parseInt(url.searchParams.get('wait') || '25000', 10)));
+    const waitRaw = parseInt(url.searchParams.get('wait') || '25000', 10);
+    // Без проверки на NaN `?wait=abc` давал setTimeout(NaN) — он срабатывает
+    // мгновенно, и long-poll обрывался, так и не дождавшись результата.
+    const waitMs = Math.min(60000, Math.max(0, Number.isFinite(waitRaw) ? waitRaw : 25000));
     const entry = await bridge.waitFor(resultMatch[1], waitMs);
     const payload = { ...entry };
     if (entry.result || entry.status === 'denied') {
@@ -494,16 +512,7 @@ async function route(req, res, url, bridge, opts) {
   }
 
   if (p === '/api/reset' && req.method === 'POST') {
-    const cwd = bridge.shell.cwd;
-    bridge.shell.close();
-    bridge.shell = new ShellSession({ cwd, timeoutMs: bridge.store.config.commandTimeoutMs });
-    bridge.shell.on('output', (e) => bridge.broadcast({ type: 'output', ...e }));
-    bridge.shell.on('command-start', (e) => bridge.broadcast({ type: 'command-start', ...e }));
-    bridge.shell.on('command-end', (e) => bridge.broadcast({ type: 'command-end', ...e }));
-    bridge.shell.on('restart', (e) => bridge.broadcast({ type: 'restart', ...e }));
-    bridge.shell.start();
-    bridge.broadcast({ type: 'restart', reason: 'manual', ...bridge.shell.info() });
-    return sendJson(res, 200, { ok: true, shell: bridge.shell.info() });
+    return sendJson(res, 200, { ok: true, shell: bridge.resetShell() });
   }
 
   if (p === '/api/cd' && req.method === 'POST') {

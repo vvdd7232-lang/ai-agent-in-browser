@@ -216,3 +216,60 @@ test('ext: extension/parser.js синхронизирован с bridge/parser.j
   const b = fs.readFileSync(path.join(__dirname, '..', 'extension', 'parser.js'), 'utf8');
   assert.ok(b.includes(a), 'расширение должно содержать актуальную копию парсера');
 });
+
+test('server: /api/reset не теряет слушателей событий shell', async () => {
+  const { bridge, server } = mk();
+  const port = await listen(server);
+  const H = { 'x-agent-token': TOKEN };
+
+  const events = ['output', 'command-start', 'command-end', 'restart', 'exit', 'error'];
+  for (const ev of events) assert.strictEqual(bridge.shell.listenerCount(ev), 1, 'до reset: ' + ev);
+
+  const r = await req(port, 'POST', '/api/reset', {}, H);
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.json.ok, true);
+
+  // до фикса пересозданной сессии вешали только 4 слушателя из 6:
+  // смерть и ошибки shell после reset в панель не долетали
+  for (const ev of events) {
+    assert.strictEqual(bridge.shell.listenerCount(ev), 1, 'после reset нет слушателя: ' + ev);
+  }
+
+  const ex = await req(port, 'POST', '/api/execute', { command: 'echo after-reset' }, H);
+  const res = await req(port, 'GET', `/api/result/${ex.json.id}?wait=8000`, null, H);
+  assert.strictEqual(res.json.result.output.trim(), 'after-reset');
+
+  await stop(bridge, server);
+});
+
+test('server: битый ?wait= не обрывает long-poll мгновенно', async () => {
+  const { bridge, server } = mk();
+  const port = await listen(server);
+  const H = { 'x-agent-token': TOKEN };
+
+  const ex = await req(port, 'POST', '/api/execute', { command: 'sleep 1.5 && echo wait-ok' }, H);
+  // parseInt('abc') -> NaN -> setTimeout(NaN) срабатывал сразу: клиент получал
+  // timedOutWait и пустой результат вместо того, чтобы дождаться команду.
+  // Команда специально не мгновенная — иначе гонка скрывает баг.
+  const t0 = Date.now();
+  const res = await req(port, 'GET', `/api/result/${ex.json.id}?wait=abc`, null, H);
+  assert.notStrictEqual(res.json.timedOutWait, true, 'битый wait= не должен обрывать ожидание');
+  assert.strictEqual(res.json.status, 'done');
+  assert.strictEqual(res.json.result.output.trim(), 'wait-ok');
+  assert.ok(Date.now() - t0 >= 1000, 'long-poll должен был дождаться команду');
+
+  await stop(bridge, server);
+});
+
+test('server: пустой токен моста не означает «вход свободен»', async () => {
+  const bridge = new Bridge({ dataDir: tmpDir(), cwd: tmpDir(), token: TOKEN });
+  bridge.store.config.token = ''; // повреждённый конфиг: секрет пустой
+  bridge.start();
+  const server = createServer(bridge);
+  const port = await listen(server);
+
+  const st = await req(port, 'GET', '/api/state');
+  assert.strictEqual(st.status, 401, 'timingSafeEqual на двух пустых буферах даёт true — нужен явный запрет');
+
+  await stop(bridge, server);
+});
