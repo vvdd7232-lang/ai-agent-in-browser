@@ -673,18 +673,30 @@ function bind() {
 
   $('#token-form').addEventListener('submit', async (e) => {
     e.preventDefault();
+    const btn = e.currentTarget.querySelector('button[type="submit"]');
     const v = $('#token-input').value.trim();
+    if (!v) {
+      $('#token-error').textContent = 'Вставь токен — он в чёрном окне моста, строка «● Токен».';
+      return;
+    }
+    // клик всегда должен давать заметную реакцию, иначе кажется, что «ничего не происходит»
+    const old = btn.textContent;
+    btn.textContent = 'Проверяю…';
+    btn.disabled = true;
+    $('#token-error').textContent = '';
     state.token = v;
     localStorage.setItem('agent-token', v);
-    const ok = await api('/api/state')
-      .then(() => true)
-      .catch(() => false);
+    const ok = await api('/api/state').then(() => true).catch(() => false);
+    btn.disabled = false;
+    btn.textContent = old;
     if (ok) {
       $('#token-gate').hidden = true;
       boot0();
     } else {
-      $('#token-error').textContent = 'Не подошёл. Токен есть в выводе `node bin/cli.js`.';
+      $('#token-error').textContent =
+        'Токен не подошёл. Скопируй его заново из чёрного окна моста (строка «● Токен») — при каждом запуске моста он может быть новым.';
       fillGateDiag();
+      $('#token-input').select();
     }
   });
 
