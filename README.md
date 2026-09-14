@@ -87,13 +87,14 @@ Get-ChildItem -Recurse build -Filter RelayBridge.exe
 
 ### Одной командой с упаковкой
 
-В **Developer PowerShell for Visual Studio 2022** можно собрать, прогнать тесты и получить готовый архив одной командой:
+В **Developer PowerShell for Visual Studio 2022** сначала нужно перейти именно в распакованную папку репозитория — не в папку установки Visual Studio. Например, после скачивания ZIP:
 
 ```powershell
+Set-Location "$env:USERPROFILE\Downloads\ai-agent-in-browser-arena-01a0a084-ai-agent-in-browser"
 .\scripts\package-release.ps1
 ```
 
-Результат будет в `release\RelayBridge.exe` и `release\RelayBridge-windows-x64.zip`.
+Проверьте папку перед запуском: команда `Get-ChildItem scripts` должна показать `package-release.ps1`. Результат будет в `release\RelayBridge.exe` и `release\RelayBridge-windows-x64.zip`.
 
 
 ## Формат команд
