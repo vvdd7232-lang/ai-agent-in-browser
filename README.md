@@ -85,16 +85,20 @@ cmake --build build --config Release --target RelayBridge
 Get-ChildItem -Recurse build -Filter RelayBridge.exe
 ```
 
-### Одной командой с упаковкой
+### Без запуска PowerShell-скрипта
 
-В **Developer PowerShell for Visual Studio 2022** сначала нужно перейти именно в распакованную папку репозитория — не в папку установки Visual Studio. Например, после скачивания ZIP:
+Самый удобный вариант — открыть распакованную папку проекта и дважды кликнуть `build-release.cmd`. Это обычный batch-файл, поэтому он не требует цифровой подписи `.ps1`-скрипта.
+
+Либо в **Developer PowerShell for Visual Studio 2022** сначала перейдите именно в распакованную папку репозитория — не в папку установки Visual Studio — и выполните:
 
 ```powershell
-Set-Location "$env:USERPROFILE\Downloads\ai-agent-in-browser-arena-01a0a084-ai-agent-in-browser"
-.\scripts\package-release.ps1
+Set-Location "$env:USERPROFILE\Desktop\ai-agent-in-browser-arena-01a0a084-ai-agent-in-browser"
+.\build-release.cmd
 ```
 
-Проверьте папку перед запуском: команда `Get-ChildItem scripts` должна показать `package-release.ps1`. Результат будет в `release\RelayBridge.exe` и `release\RelayBridge-windows-x64.zip`.
+`build-release.cmd` сам настроит CMake, соберёт `Release` x64, запустит тесты и создаст `release\RelayBridge.exe` и `release\RelayBridge-windows-x64.zip`.
+
+`.\scripts\package-release.ps1` остаётся альтернативой для систем, где разрешены неподписанные PowerShell-скрипты.
 
 
 ## Формат команд
