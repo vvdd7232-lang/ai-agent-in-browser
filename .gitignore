@@ -1,0 +1,27 @@
+# CMake and native build outputs
+/build/
+/out/
+/cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+CTestTestfile.cmake
+Testing/
+Makefile
+cmake_install.cmake
+compile_commands.json
+
+# Local binaries and packages
+*.exe
+*.pdb
+*.ilk
+*.obj
+*.lib
+*.exp
+*.dll
+*.zip
+protocol_tests
+
+# IDE and user settings
+.vs/
+.vscode/
+RelayBridge-settings.ini
